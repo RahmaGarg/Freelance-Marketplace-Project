@@ -21,7 +21,7 @@ import com.example.demo.dtos.ReviewResponse;
 import com.example.demo.dtos.UpdateReviewRequest;
 import com.example.demo.exceptions.ErrorResponse;
 import com.example.demo.exceptions.InvalidFileException;
-import com.example.demo.service.FileStorageService;
+import com.example.demo.service.AzureBlobStorageService;
 import com.example.demo.service.ReviewService;
 import java.io.FileNotFoundException;
 import java.io.IOException;
@@ -29,16 +29,17 @@ import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.time.LocalDateTime;
 
+
 @RestController
 @RequestMapping("/reviews")
 @RequiredArgsConstructor
 public class ReviewController {
     
     private final ReviewService reviewService;
-    private final FileStorageService fileStorageService;
+    private final AzureBlobStorageService azureBlobStorageService;
     
     /**
-     * Créer un avis SANS image (image optionnelle ajoutée après)
+     * Créer un avis SANS image
      */
     @PostMapping
     public ResponseEntity<ReviewResponse> createReview(
@@ -96,34 +97,9 @@ public class ReviewController {
     }
     
     /**
-     * Servir les images (IMPORTANT pour afficher les images)
+     * Note: Plus besoin d'endpoint pour servir les images car Azure fournit les URLs directement
+     * Les images sont accessibles via l'URL Azure stockée dans imageUrl
      */
-    @GetMapping("/images/{filename:.+}")
-    public ResponseEntity<Resource> getImage(@PathVariable String filename) {
-        try {
-            Resource resource = fileStorageService.loadFileAsResource(filename);
-            
-            // Déterminer le content type
-            String contentType = "image/jpeg"; // Par défaut
-            try {
-                contentType = Files.probeContentType(
-                    Paths.get(resource.getFile().getAbsolutePath()));
-            } catch (IOException e) {
-                // Utiliser le type par défaut
-            }
-            
-            return ResponseEntity.ok()
-                    .contentType(MediaType.parseMediaType(contentType))
-                    .header(HttpHeaders.CONTENT_DISPOSITION, 
-                           "inline; filename=\"" + resource.getFilename() + "\"")
-                    .body(resource);
-                    
-        } catch (FileNotFoundException e) {
-            return ResponseEntity.notFound().build();
-        } catch (IOException e) {
-            return ResponseEntity.internalServerError().build();
-        }
-    }
     
     @PutMapping("/{reviewId}")
     public ResponseEntity<ReviewResponse> updateReview(
@@ -196,4 +172,4 @@ public class ReviewController {
                 .build();
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(error);
     }
-    }
+}

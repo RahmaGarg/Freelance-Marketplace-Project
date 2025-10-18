@@ -2,6 +2,8 @@ package com.example.demo.service;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -20,19 +22,16 @@ import com.example.demo.exceptions.UnauthorizedException;
 import com.example.demo.repositories.ReviewRepository;
 
 import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
-import java.nio.file.StandardCopyOption;
-import java.util.UUID;
-
 @Service
 @RequiredArgsConstructor
 @Slf4j
 public class ReviewService {
     
     private final ReviewRepository reviewRepository;
-    private final FileStorageService fileStorageService;
+    private final AzureBlobStorageService azureBlobStorageService;
+    
+    @Value("${azure.storage.generate-sas-on-read:true}")
+    private boolean generateSasOnRead;
     
     @Transactional
     public ReviewResponse createReview(CreateReviewRequest request) {
@@ -75,10 +74,10 @@ public class ReviewService {
                 .active(true)
                 .build();
         
-        // Sauvegarder l'image si présente
+        // Sauvegarder l'image dans Azure si présente
         if (image != null && !image.isEmpty()) {
-            String filename = fileStorageService.storeFile(image);
-            review.setImagePath(filename);
+            String imageUrl = azureBlobStorageService.storeFile(image);
+            review.setImagePath(imageUrl); // Stocker l'URL complète
         }
         
         review = reviewRepository.save(review);
@@ -94,17 +93,17 @@ public class ReviewService {
         
         Review review = getReviewAndValidateOwnership(reviewId, clientId);
         
-        // Supprimer l'ancienne image si elle existe
+        // Supprimer l'ancienne image d'Azure si elle existe
         if (review.getImagePath() != null) {
-            fileStorageService.deleteFile(review.getImagePath());
+            azureBlobStorageService.deleteFile(review.getImagePath());
         }
         
-        // Sauvegarder la nouvelle image
-        String filename = fileStorageService.storeFile(file);
-        review.setImagePath(filename);
+        // Sauvegarder la nouvelle image dans Azure
+        String imageUrl = azureBlobStorageService.storeFile(file);
+        review.setImagePath(imageUrl);
         review = reviewRepository.save(review);
         
-        log.info("Image uploadée avec succès pour l'avis {}: {}", reviewId, filename);
+        log.info("Image uploadée avec succès pour l'avis {}: {}", reviewId, imageUrl);
         return mapToResponse(review);
     }
     
@@ -115,7 +114,7 @@ public class ReviewService {
         Review review = getReviewAndValidateOwnership(reviewId, clientId);
         
         if (review.getImagePath() != null) {
-            fileStorageService.deleteFile(review.getImagePath());
+            azureBlobStorageService.deleteFile(review.getImagePath());
             review.setImagePath(null);
             reviewRepository.save(review);
             log.info("Image supprimée avec succès pour l'avis {}", reviewId);
@@ -144,9 +143,9 @@ public class ReviewService {
         
         Review review = getReviewAndValidateOwnership(reviewId, clientId);
         
-        // Supprimer l'image associée
+        // Supprimer l'image associée d'Azure
         if (review.getImagePath() != null) {
-            fileStorageService.deleteFile(review.getImagePath());
+            azureBlobStorageService.deleteFile(review.getImagePath());
         }
         
         // Soft delete
@@ -220,7 +219,7 @@ public class ReviewService {
                 .build();
     }
     
-    // Méthodes utilitaires privées
+    // ========== Méthodes utilitaires privées ==========
     
     private void validateReviewCreation(Long clientId, Long productId) {
         if (reviewRepository.existsByClientIdAndProductIdAndActiveTrue(clientId, productId)) {
@@ -242,10 +241,10 @@ public class ReviewService {
     }
     
     private ReviewResponse mapToResponse(Review review) {
+        // Générer une URL SAS pour l'image si elle existe
         String imageUrl = null;
-        if (review.getImagePath() != null) {
-            // Construire l'URL complète pour accéder à l'image
-            imageUrl = "/api/reviews/images/" + review.getImagePath();
+        if (review.getImagePath() != null && !review.getImagePath().isEmpty()) {
+            imageUrl = azureBlobStorageService.generateSasUrl(review.getImagePath());
         }
         
         return ReviewResponse.builder()
@@ -255,7 +254,7 @@ public class ReviewService {
                 .orderId(review.getOrderId())
                 .rating(review.getRating())
                 .comment(review.getComment())
-                .imageUrl(imageUrl)
+                .imageUrl(imageUrl) // URL avec SAS token pour accès temporaire
                 .verified(review.getVerified())
                 .createdAt(review.getCreatedAt())
                 .build();
